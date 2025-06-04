@@ -19,14 +19,14 @@ def main():
     # parser = argparse.ArgumentParser(description="Train the sound classifier.")
     # parser.add_argument("--epochs", type=int, default=100, help="Number of epochs.")
     # args = parser.parse_args()
-
-  dataset_path = "/content/gdrive/MyDrive/US8K/us8k_df.pkl"
+  # TODO: CHANGE THIS TO YOUR DATA PATH
+  dataset_path = "/ivi/zfs/s0/original_homes/smishra/dataset/us8k_df.pkl"
 
   us8k_df = pd.read_pickle(dataset_path)
 
   FOLD_K = 1
   REPEAT = 1
-  model_name = 'cnn_hyp'
+  model_name = 'cnn_mm'
   # Example: 10-fold cross validation
   tot_history = []
   for i in range(REPEAT):

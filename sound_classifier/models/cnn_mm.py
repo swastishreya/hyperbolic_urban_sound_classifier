@@ -2,7 +2,6 @@ from hypll.manifolds.poincare_ball import Curvature, PoincareBall
 from hypll import nn as hnn
 from hypll.optim import RiemannianAdam, RiemannianSGD
 from hypll.tensors import TangentTensor, ManifoldParameter
-from hypll.nn import ChangeManifold
 
 import torch
 import torch.nn.functional as F
@@ -21,75 +20,67 @@ class Net(nn.Module):
     def __init__(self, device):
         super(Net, self).__init__()
 
-        self.manifolds = [PoincareBall(c=Curvature(0.1, requires_grad = True)), # Manifold for the conv layers
-                         PoincareBall(c=Curvature(0.1, requires_grad = True))] # Manifold for the linear layers
-        
-        self.switch_manifold = ChangeManifold(self.manifolds[1]) # Here we only require to change to manifolds[1]
+        self.manifold = PoincareBall(c=Curvature(0.1, requires_grad = False))
 
-        ################# CONV LAYERS ###################
-        self.conv1 = hnn.HConvolution2d(in_channels=1, out_channels=24, kernel_size=5, padding=0, manifold=self.manifolds[0])
-        # self.conv1 = nn.Conv2d(in_channels=1, out_channels=24, kernel_size=5, padding=0)
-        self.conv2 = hnn.HConvolution2d(in_channels=24, out_channels=36, kernel_size=4, padding=0, manifold=self.manifolds[0])
-        # self.conv2 = nn.Conv2d(in_channels=24, out_channels=36, kernel_size=4, padding=0)
-        self.conv3 = hnn.HConvolution2d(in_channels=36, out_channels=48, kernel_size=3, padding=0, manifold=self.manifolds[0])
-        # self.conv3 = nn.Conv2d(in_channels=36, out_channels=48, kernel_size=3, padding=0)
-        self.avg_pool = hnn.HAvgPool2d(kernel_size=(17, 17), manifold=self.manifolds[0])
-        self.max_pool1 = hnn.HMaxPool2d(kernel_size=(3,3), stride=3, manifold = self.manifolds[0])
-        self.max_pool2 = hnn.HMaxPool2d(kernel_size=(2,2), stride=2, manifold = self.manifolds[0])
-        self.relu1 = hnn.HReLU(manifold=self.manifolds[0])
-        ###################################################
+        # self.conv1 = hnn.HConvolution2d(in_channels=1, out_channels=24, kernel_size=5, padding=0, manifold=self.manifold)
+        self.conv1 = nn.Conv2d(in_channels=1, out_channels=24, kernel_size=5, padding=0)
+        # self.conv2 = hnn.HConvolution2d(in_channels=24, out_channels=36, kernel_size=4, padding=0, manifold=self.manifold)
+        self.conv2 = nn.Conv2d(in_channels=24, out_channels=36, kernel_size=4, padding=0)
+        # self.conv3 = hnn.HConvolution2d(in_channels=36, out_channels=48, kernel_size=3, padding=0, manifold=self.manifold)
+        self.conv3 = nn.Conv2d(in_channels=36, out_channels=48, kernel_size=3, padding=0)
 
-        ################# LINEAR LAYERS ###################
+
         # self.fc1 = nn.Linear(in_features=48, out_features=60)
-        self.fc1 = hnn.HLinear(in_features=48, out_features=60, manifold=self.manifolds[1])
+        self.fc1 = hnn.HLinear(in_features=48, out_features=60, manifold=self.manifold)
         # self.fc2 = nn.Linear(in_features=60, out_features=10)
-        self.fc2 = hnn.HLinear(in_features=60, out_features=10,manifold= self.manifolds[1])
-        self.relu2 = hnn.HReLU(manifold=self.manifolds[1])
-        ###################################################
+        self.fc2 = hnn.HLinear(in_features=60, out_features=10,manifold= self.manifold)
+
+        self.relu = hnn.HReLU(manifold=self.manifold)
+        # self.avg_pool = hnn.HAvgPool2d(kernel_size=(17, 17), manifold=self.manifold)
+        # self.max_pool1 = hnn.HMaxPool2d(kernel_size=(3,3), stride=3, manifold = self.manifold)
+        # self.max_pool2 = hnn.HMaxPool2d(kernel_size=(2,2), stride=2, manifold = self.manifold)
 
         self.criterion = nn.CrossEntropyLoss()            # lr=1e-03, weight_decay=5e-4
-        # self.optimizer = RiemannianSGD(self.parameters(), lr=1e-02, weight_decay=1e-03)
-        self.optimizer = RiemannianAdam(self.parameters(), lr=1e-03, weight_decay=1e-03)
+        self.optimizer = RiemannianSGD(self.parameters(), lr=1e-03, weight_decay=1e-03)
+        # self.optimizer = RiemannianAdam(self.parameters(), lr=1e-03, weight_decay=1e-03)
 
         self.device = device
 
     def forward(self, x):
-        # move the inputs to the manifolds[0]
-        tangents = TangentTensor(data=x, man_dim=1, manifold=self.manifolds[0])
-        x = self.manifolds[0].expmap(tangents)
-
-
+        ############ EUCLIDEAN CNN ###############
         # cnn layer-1
         x = self.conv1(x)
-        x = self.max_pool1(x)
-        x = self.relu1(x)
-
+        x = F.max_pool2d(x, kernel_size=(3,3), stride=3)
+        x = F.relu(x)
 
         # cnn layer-2
         x = self.conv2(x)
-        x = self.max_pool2(x)
-        x = self.relu1(x)
+        x = F.max_pool2d(x, kernel_size=(2,2), stride=2)
+        x = F.relu(x)
 
         # cnn layer-3
         x = self.conv3(x)
-        x = self.relu1(x)
+        x = F.relu(x)
 
-        x = self.avg_pool(x)
-        x = x.flatten(start_dim=1)
+        # global average pooling 2D
+        x = F.avg_pool2d(x, kernel_size=x.size()[2:])
+        x = x.view(-1, 48)
 
-        # SWITCH x from MANIFOLD[0] to MANNIFOLD[1]
-        x = self.switch_manifold(x)
+        ###############################################
+        # move the inputs to the manifold
+        tangents = TangentTensor(data=x, man_dim=1, manifold=self.manifold)
+        x = self.manifold.expmap(tangents)
 
         # dense layer-1
         x = self.fc1(x)
-        x = self.relu2(x)
+        x = self.relu(x)
         # TODO: How to add dropout to hyperbolic layers?
 
         # hyp dense output layer
         x = self.fc2(x)
 
         # move back to euclidean
-        x = self.manifolds[1].logmap(x=None, y= x)
+        x = self.manifold.logmap(x=None, y= x)
 
         return x.tensor
 
